@@ -1,0 +1,3 @@
+../Core/Src/motion.c:60:9:motion_plan	88	static
+../Core/Src/motion.c:161:11:motion_plan_fp	56	static
+../Core/Src/motion.c:277:6:motion_complete	0	static
