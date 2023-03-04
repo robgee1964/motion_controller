@@ -1,3 +1,5 @@
-../Core/Src/motion.c:60:9:motion_plan	88	static
-../Core/Src/motion.c:161:11:motion_plan_fp	56	static
-../Core/Src/motion.c:277:6:motion_complete	0	static
+../Core/Src/motion.c:81:9:motion_plan_df	72	static
+../Core/Src/motion.c:159:8:motion_plan_sf	48	static
+../Core/Src/motion.c:262:10:motion_start_fp	16	static
+../Core/Src/motion.c:328:6:motion_complete	8	static
+../Core/Src/motion.c:339:10:motion_step	8	static

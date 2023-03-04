@@ -24,6 +24,7 @@
 /* USER CODE BEGIN Includes */
 #include <stdint.h>
 #include <stdbool.h>
+#include <limits.h>
 #include "motion.h"
 #include "usbd_cdc_if.h"
 /* USER CODE END Includes */
@@ -80,6 +81,7 @@ static void MX_TIM3_Init(void);
 
 static void set_led_rate(uint32_t freq, uint32_t dr);
 static void bg_proc(void);
+static void schedule_pulse(uint32_t ticks);
 static void motion_test(void);
 /* USER CODE END PFP */
 
@@ -142,8 +144,6 @@ int main(void)
     psc = (psc * ACCEL_K) >> 8;
     a_psc[i] = psc;
   }
-
-  motion_test();
 
 
   /* USER CODE END 2 */
@@ -419,13 +419,35 @@ void HAL_TIM_OC_DelayElapsedCallback(TIM_HandleTypeDef *htim)
 
 void HAL_TIM_PWM_PulseFinishedCallback(TIM_HandleTypeDef *htim)
 {
+  static uint32_t ticks_prev = ULONG_MAX;
+  static uint32_t steps = 0;
+  static uint8_t buff[30];
   // See comment in OC delay callback
   if (htim->Instance == TIM1)
   {
     //HAL_GPIO_TogglePin(pin_debug_GPIO_Port, pin_debug_Pin);
-    uint32_t psc_new = (htim->Init.Prescaler * 7) >> 3;
-    htim->Instance->PSC = psc_new;
-    htim->Init.Prescaler = psc_new;
+    uint32_t ticks = motion_step();
+    if (ticks == 0)
+    {
+      ticks_prev = ULONG_MAX;
+      // Stop timer
+      HAL_TIM_PWM_Stop_IT(&htim1, TIM_CHANNEL_1);
+      spwm.running = false;
+      HAL_GPIO_WritePin(pin_debug_GPIO_Port, pin_debug_Pin, GPIO_PIN_RESET);
+
+      sprintf((void*)buff, "ISR count %lu\r\n", steps);
+      (void)CDC_Transmit_FS(buff, strlen((void*)buff));
+      steps = 0;
+    }
+    else
+    {
+      steps++;
+      if (ticks != ticks_prev)
+      {
+        schedule_pulse(ticks);
+        ticks_prev = ticks;
+      }
+    }
   }
 }
 
@@ -460,16 +482,38 @@ static void bg_proc(void)
       sprintf((void*)buff, "Starting pulses\r\n");
       (void)CDC_Transmit_FS(buff, strlen((void*)buff));
       htim3.Instance->CNT = 0;
-      HAL_GPIO_WritePin(pin_debug_GPIO_Port, pin_debug_Pin, GPIO_PIN_SET);
-      HAL_TIM_OC_Start_IT(&htim3, TIM_CHANNEL_1);
-      htim1.Init.Prescaler = spwm.psc;
+      uint32_t ticks = motion_start_fp(210, 2000, 500);
+      schedule_pulse(ticks);
+      htim1.Instance->EGR |= TIM_EGR_UG;
       __HAL_TIM_CLEAR_FLAG(&htim1, TIM_IT_CC1);
 //      HAL_TIM_PWM_Start_DMA(&htim1, TIM_CHANNEL_1, a_psc, ACCEL_STEPS);
+      HAL_GPIO_WritePin(pin_debug_GPIO_Port, pin_debug_Pin, GPIO_PIN_SET);
       HAL_TIM_PWM_Start_IT(&htim1, TIM_CHANNEL_1);
       spwm.running = true;
     }
   }
 
+}
+
+
+static void schedule_pulse(uint32_t ticks)
+{
+  // ticks is in terms of Fclock/5 (i.e. ARR = 4)
+  // Work out PSC, ARR and CCR1 values
+  uint32_t psc;
+  uint32_t div = 5;
+  psc = ticks;
+  while(1)
+  {
+    if (psc <= 65535)
+      break;
+    div <<= 1;
+    psc >>= 1;
+  }
+
+  htim1.Instance->ARR = div-1;
+  htim1.Instance->CCR1 = div >> 1;
+  htim1.Instance->PSC = psc;
 }
 
 #define NUM_STEPS       600
@@ -479,10 +523,10 @@ static void bg_proc(void)
 static void motion_test(void)
 {
   HAL_GPIO_WritePin(pin_debug_GPIO_Port, pin_debug_Pin, GPIO_PIN_SET);
-  uint32_t *p_motion = motion_plan_fp(NUM_STEPS, ACCEL, MAX_SPEED);
+  uint32_t *p_motion = motion_start_fp(NUM_STEPS, ACCEL, MAX_SPEED);
   HAL_GPIO_WritePin(pin_debug_GPIO_Port, pin_debug_Pin, GPIO_PIN_RESET);
-  p_motion = motion_plan_fp(5, ACCEL, MAX_SPEED);
-  p_motion = motion_plan_fp(10, ACCEL, MAX_SPEED);
+  p_motion = motion_start_fp(5, ACCEL, MAX_SPEED);
+  p_motion = motion_start_fp(10, ACCEL, MAX_SPEED);
 
   for (uint32_t i = 0; i < NUM_STEPS; i++)
   {
